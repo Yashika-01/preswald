@@ -5,6 +5,7 @@ import { BrowserRouter as Router } from 'react-router-dom';
 import Layout from './components/Layout';
 import LoadingState from './components/LoadingState';
 import Dashboard from './components/pages/Dashboard';
+import EmbedView from './components/pages/EmbedView';
 import { comm } from './utils/websocket';
 
 const App = () => {
@@ -152,17 +153,29 @@ const App = () => {
 
   return (
     <Router>
-      <Layout>
-        {!isConnected || areComponentsLoading ? (
-          <LoadingState isConnected={isConnected} />
-        ) : (
-          <Dashboard
-            components={components}
-            error={error}
-            handleComponentUpdate={handleComponentUpdate}
-          />
-        )}
-      </Layout>
+      <Routes>
+        {/* Embed routes: no Layout */}
+        <Route path="/embed" element={<EmbedView />} />
+        <Route path="/embed/:id" element={<EmbedView />} />
+
+        {/* All other routes get the full shell */}
+        <Route
+          path="/*"
+          element={
+            <Layout>
+              {!isConnected || areComponentsLoading ? (
+                <LoadingState isConnected={isConnected} />
+              ) : (
+                <Dashboard
+                  components={components}
+                  error={error}
+                  handleComponentUpdate={handleComponentUpdate}
+                />
+              )}
+            </Layout>
+          }
+        />
+      </Routes>
     </Router>
   );
 };

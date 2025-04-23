@@ -170,7 +170,8 @@ def init(name, template):
     default=False,
     help="Disable automatically opening a new browser tab",
 )
-def run(port, log_level, disable_new_tab):
+@click.option("--embed", is_flag=True, help="Run in embed only mode")
+def run(port, log_level, disable_new_tab, embed):
     """
     Run a Preswald app from the current directory.
 
@@ -228,7 +229,7 @@ def run(port, log_level, disable_new_tab):
 
             webbrowser.open(url)
 
-        start_server(script=script, port=port)
+        start_server(script=script, port=port, embed=embed)
 
     except Exception as e:
         click.echo(f"Error: {e}")
@@ -333,6 +334,18 @@ def deploy(script, target, port, log_level, github, api_key):
         """
 
         click.echo(click.style(success_message, fg="green"))
+
+        # 📦 Embed snippets for your deployed app
+        click.echo("\n🎉 Embed snippets for your deployed app:")
+        click.echo(
+            f'• Full app:   <iframe src="{url}/embed" '
+            'width="800" height="600"></iframe>'
+        )
+        click.echo(
+            f"• Single component: "
+            f'<iframe src="{url}/embed/YOUR_COMPONENT_ID" '
+            'width="600" height="400"></iframe>'
+        )
 
     except Exception as e:
         click.echo(click.style(f"Deployment failed: {e!s} ❌", fg="red"))

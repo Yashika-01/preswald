@@ -374,14 +374,26 @@ class PostMessageClient {
 }
 
 export const createCommunicationLayer = () => {
-  // Detect environment: server (WebSocket) or browser (PostMessage)
-  const isBrowser = window !== window.top;
+  // Are we in any iframe?
+  const isIframe = window !== window.top;
+  // Embed mode if they injected an ID *or* we’re on the /embed path
+  const isEmbedPath = window.location.pathname.startsWith('/embed');
+  const isEmbedMode = Boolean(window.__EMBED_ID__) || isEmbedPath;
   console.log(
     '[Communication] Detected environment:',
-    isBrowser ? 'browser (iframe)' : 'server (top-level)'
+    isIframe ? 'iframe' : 'top-level',
+    'embedMode:',
+    isEmbedMode,
+    'path:',
+    window.location.pathname
   );
 
-  return isBrowser ? new PostMessageClient() : new WebSocketClient();
+  // Only use postMessage if *not* embed mode; embed‐iframes get a real WS.
+  if (isIframe && !isEmbedMode) {
+    return new PostMessageClient();
+  } else {
+    return new WebSocketClient();
+  }
 };
 
 export const comm = createCommunicationLayer();

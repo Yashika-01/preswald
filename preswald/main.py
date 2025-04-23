@@ -5,10 +5,12 @@ import re
 import signal
 from importlib.resources import files
 
+import click
+import toml
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from preswald.engine.managers.branding import BrandingManager
@@ -22,6 +24,15 @@ def create_app(script_path: str | None = None) -> FastAPI:
     """Create and configure the FastAPI application"""
     app = FastAPI()
     service = PreswaldService.initialize(script_path)
+
+    # Middleware to inject the X-Frame-Options and CSP headers on /embed
+    @app.middleware("http")
+    async def allow_iframe_embedding(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/embed"):
+            response.headers["X-Frame-Options"] = "ALLOWALL"
+            response.headers["Content-Security-Policy"] = "frame-ancestors *;"
+        return response
 
     # Configure CORS
     app.add_middleware(
@@ -64,7 +75,11 @@ def _register_static_routes(app: FastAPI):
     async def serve_favicon():
         """Serve favicon.ico from preswald.toml branding or fallback to assets directory"""
         try:
-            return _handle_favicon_request(app.state.service)
+            # Redirect into our /images StaticFiles mount (preserves the ?timestamp)
+            branding = app.state.service.branding_manager.get_branding_config(
+                app.state.service.script_path
+            )
+            return RedirectResponse(url=branding["favicon"])
         except Exception as e:
             logger.error(f"Error serving favicon: {e}")
             raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -105,16 +120,50 @@ def _register_websocket_routes(app: FastAPI):
                 await websocket.close(code=1011, reason=str(e))
 
 
+def _register_embed_routes(app: FastAPI):
+    svc = app.state.service
+
+    @app.get("/embed", response_class=HTMLResponse)
+    async def embed_full(request: Request):
+        cfg = _load_toml_config(svc.script_path).get("deployment", {})
+        if not cfg.get("embeddable", False):
+            raise HTTPException(403, "Embedding disabled")
+        resp = _handle_index_request(svc)
+        return resp
+
+    @app.get("/embed/{component_id}", response_class=HTMLResponse)
+    async def embed_component(request: Request, component_id: str):
+        cfg = _load_toml_config(svc.script_path).get("deployment", {})
+        if not cfg.get("embeddable", False):
+            raise HTTPException(403, "Embedding disabled")
+        resp = _handle_index_request(svc)
+        html = resp.body.decode()
+        inject = f"<script>window.__EMBED_ID__ = '{component_id}';</script>"
+        html = html.replace("</head>", inject + "</head>")
+        out = HTMLResponse(html)
+        return out
+
+
 def _register_routes(app: FastAPI):
     """Register all application routes"""
 
     _register_websocket_routes(app)
+    _register_embed_routes(app)
     _register_static_routes(app)  # order matters for static routes
 
 
-def start_server(script: str | None = None, port: int = 8501):
+def start_server(script: str | None = None, port: int = 8501, embed: bool = False):
     """Start the FastAPI server"""
     app = create_app(script)
+
+    if embed:
+        click.echo("\n🎉 Embed snippets:")
+        click.echo(
+            f'• Full app:   <iframe src="http://localhost:{port}/embed" width="800" height="600"></iframe>'
+        )
+        click.echo(
+            f'• Single:     <iframe src="http://localhost:{port}/embed/YOUR_COMPONENT_ID" width="600" height="400"></iframe>\n'
+        )
 
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
     server = uvicorn.Server(config)
@@ -229,3 +278,12 @@ def _handle_favicon_request(service: PreswaldService) -> HTMLResponse:
     except Exception as e:
         logger.error(f"Error serving index: {e}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
+
+
+def _load_toml_config(script_path: str | None) -> dict:
+    try:
+        base = os.path.dirname(script_path) if script_path else os.getcwd()
+        cfg = os.path.join(base, "preswald.toml")
+        return toml.load(cfg) if os.path.exists(cfg) else {}
+    except Exception:
+        return {}
